@@ -1,0 +1,22 @@
+auth:
+  login: "REDACTED_LOGIN"
+  password: "REDACTED_PASSWORD"
+  telegram_token: "REDACTED_TELEGRAM_TOKEN"
+  telegram_chat_id: "REDACTED_CHAT_ID"
+
+search:
+  good_words:
+    - "МК"
+    - "сайт"
+    - "программирование"
+    - "схемотехника"
+    - "диз"
+    - "разраб"
+    - "создание"
+  bad_words:
+    - "врач"
+
+settings:
+  refresh_interval: 60
+  batch_size: 10
+  scroll_pause_time: 2
