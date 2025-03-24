@@ -10,6 +10,7 @@ import json
 import hashlib
 import shutil
 import os
+from datetime import datetime
 
 import telebot
 from bs4 import BeautifulSoup as bs
@@ -45,12 +46,17 @@ class ProfiBotScraper:
                  batch_size: int,
                  scroll_pause_time: int,
                  headless: bool,
+                 night_start_hour: int,
+                 night_end_hour: int,
                  state_file: str = "state.json"):
         self.login = login
         self.password = password
         self.token = telegram_token
         self.chat_id = telegram_chat_id
         self.bot = telebot.TeleBot(self.token)
+
+        self.night_start_hour = night_start_hour
+        self.night_end_hour = night_end_hour
 
         self.headless = headless
 
@@ -67,7 +73,7 @@ class ProfiBotScraper:
         self.load_state()
 
         self.lock = threading.Lock()
-        self.shutdown_flag = False  # Флаг для корректного завершения потоков
+        self.shutdown_flag = False
 
         self.temp_user_data_dir = tempfile.mkdtemp()
 
@@ -286,7 +292,6 @@ class ProfiBotScraper:
             message += "\nСсылка на задачу не найдена."
         return message
 
-
     @staticmethod
     def word_check(full_text: tuple,
                    good: set,
@@ -326,20 +331,29 @@ class ProfiBotScraper:
             self.shutdown()
 
     def search_loop(self) -> None:
+
         try:
-            sleep_time = random.randint(600, 1200)
-            logger.info("Поисковый процесс ожидает %d секунд перед поиском", sleep_time)
-            current_sleep_time = 0
+            while not self.shutdown_flag:
+                now_hour = datetime.now().hour
 
-            while not self.shutdown_flag and current_sleep_time < sleep_time:
-                time.sleep(5)
-                current_sleep_time += 5
+                is_night = self.night_start_hour <= now_hour < self.night_end_hour
 
-            if not self.shutdown_flag:
-                self.update_all_tasks()
-            else:
-                logger.info("Поиск не запущен, т.к. флаг завершения установлен.")
-                raise
+                if is_night:
+                    sleep_time = random.randint(3600, 5400)  # от 1 до 1.5 часов
+                    logger.info("🌙 Ночной режим. Следующий поиск через %d секунд", sleep_time)
+                else:
+                    sleep_time = random.randint(600, 1200)  # от 10 до 20 минут
+                    logger.info("Дневной режим. Следующий поиск через %d секунд", sleep_time)
+
+                current_sleep_time = 0
+                while not self.shutdown_flag and current_sleep_time < sleep_time:
+                    time.sleep(5)
+                    current_sleep_time += 5
+
+                if not self.shutdown_flag:
+                    self.update_all_tasks()
+                else:
+                    logger.info("Поиск не запущен, т.к. флаг завершения установлен.")
         except Exception as e:
             logger.exception("Критическая ошибка в search_loop: %s", e)
             self.shutdown()
@@ -402,6 +416,8 @@ if __name__ == '__main__':
         refresh_interval=settings.get("refresh_interval", 60),
         batch_size=settings.get("batch_size", 20),
         scroll_pause_time=settings.get("scroll_pause_time", 2),
+        night_start_hour=settings.get("night_start_hour", 23),
+        night_end_hour=settings.get("night_end_hour", 6),
         headless=chrome.get("headless", True)
     )
     try:
