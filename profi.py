@@ -1,4 +1,5 @@
 import logging
+import pickle
 import re
 import time
 import tempfile
@@ -8,15 +9,14 @@ import yaml
 import json
 import hashlib
 import shutil
+import os
+from datetime import datetime
 
 import telebot
 from bs4 import BeautifulSoup as bs
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 from config_logging import setup_logging
@@ -45,12 +45,20 @@ class ProfiBotScraper:
                  refresh_interval: int,
                  batch_size: int,
                  scroll_pause_time: int,
+                 headless: bool,
+                 night_start_hour: int,
+                 night_end_hour: int,
                  state_file: str = "state.json"):
         self.login = login
         self.password = password
         self.token = telegram_token
         self.chat_id = telegram_chat_id
         self.bot = telebot.TeleBot(self.token)
+
+        self.night_start_hour = night_start_hour
+        self.night_end_hour = night_end_hour
+
+        self.headless = headless
 
         self.good_words = good_words
         self.bad_words = bad_words
@@ -65,7 +73,7 @@ class ProfiBotScraper:
         self.load_state()
 
         self.lock = threading.Lock()
-        self.shutdown_flag = False  # Флаг для корректного завершения потоков
+        self.shutdown_flag = False
 
         self.temp_user_data_dir = tempfile.mkdtemp()
 
@@ -74,7 +82,11 @@ class ProfiBotScraper:
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--headless=new')
+        if self.headless:
+            chrome_options.add_argument('--headless=new')
+            logger.info("Режим headless включен")
+        else:
+            logger.info("Режим headless выключен")
 
         user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -114,39 +126,23 @@ class ProfiBotScraper:
             logger.exception("Ошибка сохранения состояния: %s", e)
             self.shutdown()
 
-    def login_to_site(self) -> None:
+    def load_cookies(self) -> None:
+        """Загрузка session cookies вместо логина и пароля"""
         try:
-            self.driver.get(self.URL_TASKS)
-        except TimeoutException as ex:
-            logger.exception("TimeoutException при загрузке страницы авторизации: %s", ex)
-            try:
-                self.driver.refresh()
-            except Exception as e:
-                logger.exception("Ошибка при обновлении страницы авторизации: %s", e)
+            self.driver.get(self.URL_TASKS)  # Установка домена
+            if not os.path.exists("session"):
+                logger.error("Файл session не найден.")
                 self.shutdown()
-
-        try:
-            login_field = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "ui-input"))
-            )
-            login_field.clear()
-            login_field.send_keys(self.login)
-
-            login_fields = self.driver.find_elements(By.CLASS_NAME, "ui-input")
-            if len(login_fields) > 1:
-                login_fields[1].clear()
-                login_fields[1].send_keys(self.password)
-
-            button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CLASS_NAME, "ui-button"))
-            )
-            button.click()
-            logger.info("Клик по кнопке авторизации")
+                return
+            cookies = pickle.load(open("session", "rb"))
+            for cookie in cookies:
+                self.driver.add_cookie(cookie)
+            self.driver.get(self.URL_TASKS)  # Повторный переход с cookie
+            time.sleep(10)
+            logger.info("Cookies успешно загружены")
         except Exception as e:
-            logger.exception("Ошибка при авторизации: %s", e)
+            logger.exception("Ошибка при загрузке cookies: %s", e)
             self.shutdown()
-
-        time.sleep(5)
 
     def refresh_page(self) -> None:
         last_height = self.driver.execute_script("return document.body.scrollHeight")
@@ -176,7 +172,7 @@ class ProfiBotScraper:
 
     def update_all_tasks(self) -> None:
         try:
-            self.driver.get(self.URL_TASKS)
+            self.human_refresh()
         except TimeoutException as ex:
             logger.exception("TimeoutException при обновлении страницы: %s", ex)
             try:
@@ -185,16 +181,22 @@ class ProfiBotScraper:
                 logger.exception("Ошибка при обновлении страницы: %s", e)
                 self.shutdown()
 
+        logger.info("Поиск новых задач на странице запущен")
         self.refresh_page()
         page = self.driver.page_source
         soup = bs(page, 'html.parser')
         blocks = soup.find_all(class_=re.compile('SnippetBodyStyles__Container-'))
         new_tasks = []
+        if not blocks:
+            logger.error("Блоки задач не найдены на странице")
         with self.lock:
             existing_ids = {task['id'] for task in self.all_tasks}
             for block in blocks:
                 task_key = block.find(class_=re.compile('SubjectAndPriceStyles__SubjectsText-'))
                 name = block.find(class_=re.compile('SnippetBodyStyles__MainInfo-'))
+                time_elem = block.find(class_=re.compile("Date__DateText-"))
+                time_info = time_elem.get_text(strip=True) if time_elem else ""
+
                 href = block.attrs.get('href', '')
                 if not task_key or not name or not href:
                     continue
@@ -212,6 +214,7 @@ class ProfiBotScraper:
                         'title': task_title,
                         'description': task_description,
                         'url': my_url,
+                        'time': time_info,
                         'added': time.time()
                     })
 
@@ -223,6 +226,15 @@ class ProfiBotScraper:
             logger.info("Всего задач в хранилище: %d", len(self.all_tasks))
             self.cleanup_old_tasks()
             self.save_state()
+
+    def human_refresh(self) -> None:
+        """Человеческий refresh страницы"""
+        logger.info("Запущено обновление страницы")
+        time.sleep(random.uniform(5, 8))
+        self.driver.refresh()
+        time.sleep(random.uniform(8, 12))
+        self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(random.uniform(10, 20))
 
     def send_batch(self) -> None:
         new_tasks = []
@@ -239,7 +251,7 @@ class ProfiBotScraper:
 
         batch = new_tasks[:self.BATCH_SIZE]
         for task in batch:
-            formatted_message = self.format_task_message((task['title'], task['description'], task['url']))
+            formatted_message = self.format_task_message(task)
             if formatted_message:
                 self.send_telegram_message(formatted_message)
             with self.lock:
@@ -255,10 +267,11 @@ class ProfiBotScraper:
         return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
 
     @staticmethod
-    def format_task_message(task_stack: tuple) -> str or None:
-        task_title, task_description, task_url = task_stack
-        task_title = ProfiBotScraper.escape_markdown(task_title.strip())
-        task_description = ProfiBotScraper.escape_markdown(task_description.strip())
+    def format_task_message(task: dict) -> str:
+        task_title = ProfiBotScraper.escape_markdown(task['title'].strip())
+        task_description = ProfiBotScraper.escape_markdown(task['description'].strip())
+        task_url = task.get("url")
+        task_time = task.get("time", "")
 
         if isinstance(task_url, str):
             url_match = re.search(r"https://profi\.ru/backoffice/n\.php\?o=\d+", task_url)
@@ -266,15 +279,22 @@ class ProfiBotScraper:
         else:
             task_url = None
 
-        if task_url:
-            return (
-                f"📌 *Новое задание*\n\n"
-                f"📝 *{task_title}*\n"
-                f"{task_description}\n\n"
-                f"🔗 [Подробнее о задании]({task_url})"
-            )
+        message = (
+            f"📌 *Новое задание*\n\n"
+            f"📝 *{task_title}*\n"
+            f"{task_description}\n"
+        )
+
+        if task_time:
+            message += f"\n🕒 _{task_time}_\n"
         else:
-            return None
+            message += "Время задачи не распознано.\n"
+
+        if task_url:
+            message += f"\n🔗 [Подробнее о задании]({task_url})"
+        else:
+            message += "\nСсылка на задачу не найдена."
+        return message
 
     @staticmethod
     def word_check(full_text: tuple,
@@ -315,19 +335,36 @@ class ProfiBotScraper:
             self.shutdown()
 
     def search_loop(self) -> None:
+
         try:
             while not self.shutdown_flag:
-                sleep_time = random.randint(300, 600)
-                logger.info("Поисковый процесс ожидает %d секунд", sleep_time)
-                time.sleep(sleep_time)
-                self.update_all_tasks()
+                now_hour = datetime.now().hour
+
+                is_night = self.night_start_hour <= now_hour < self.night_end_hour
+
+                if is_night:
+                    sleep_time = random.randint(3600, 5400)  # от 1 до 1.5 часов
+                    logger.info("🌙 Ночной режим. Следующий поиск через %d секунд", sleep_time)
+                else:
+                    sleep_time = random.randint(600, 1200)  # от 10 до 20 минут
+                    logger.info("Дневной режим. Следующий поиск через %d секунд", sleep_time)
+
+                current_sleep_time = 0
+                while not self.shutdown_flag and current_sleep_time < sleep_time:
+                    time.sleep(5)
+                    current_sleep_time += 5
+
+                if not self.shutdown_flag:
+                    self.update_all_tasks()
+                else:
+                    logger.info("Поиск не запущен, т.к. флаг завершения установлен.")
         except Exception as e:
             logger.exception("Критическая ошибка в search_loop: %s", e)
             self.shutdown()
 
     def run(self) -> None:
-        logger.info("Начало работы скрипта")
-        self.login_to_site()
+        logger.info("====== Начало работы бота ======")
+        self.load_cookies()
         sending_thread = threading.Thread(target=self.sending_loop, daemon=True, name="SendingThread")
         search_thread = threading.Thread(target=self.search_loop, daemon=True, name="SearchThread")
         sending_thread.start()
@@ -346,7 +383,7 @@ class ProfiBotScraper:
             logger.info("Работа завершена.")
 
     def shutdown(self) -> None:
-        logger.info("Начало процедуры завершения работы")
+        logger.info("Начало процедуры завершения работы потока")
         self.shutdown_flag = True
         try:
             self.driver.quit()
@@ -357,7 +394,7 @@ class ProfiBotScraper:
         except Exception as e:
             logger.exception("Ошибка при удалении временной директории: %s", e)
         self.save_state()
-        logger.info("Скрипт завершил работу корректно.")
+        logger.info("Поток завершил работу корректно.")
 
 
 if __name__ == '__main__':
@@ -371,6 +408,7 @@ if __name__ == '__main__':
     auth = config.get("auth", {})
     search = config.get("search", {})
     settings = config.get("settings", {})
+    chrome = config.get("chrome", {})
 
     scraper = ProfiBotScraper(
         login=auth.get("login"),
@@ -381,7 +419,10 @@ if __name__ == '__main__':
         bad_words=search.get("bad_words", []),
         refresh_interval=settings.get("refresh_interval", 60),
         batch_size=settings.get("batch_size", 20),
-        scroll_pause_time=settings.get("scroll_pause_time", 2)
+        scroll_pause_time=settings.get("scroll_pause_time", 2),
+        night_start_hour=settings.get("night_start_hour", 23),
+        night_end_hour=settings.get("night_end_hour", 6),
+        headless=chrome.get("headless", True)
     )
     try:
         scraper.run()
