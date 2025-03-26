@@ -181,11 +181,14 @@ class ProfiBotScraper:
                 logger.exception("Ошибка при обновлении страницы: %s", e)
                 self.shutdown()
 
+        logger.info("Поиск новых задач на странице запущен")
         self.refresh_page()
         page = self.driver.page_source
         soup = bs(page, 'html.parser')
         blocks = soup.find_all(class_=re.compile('SnippetBodyStyles__Container-'))
         new_tasks = []
+        if not blocks:
+            logger.error("Блоки задач не найдены на странице")
         with self.lock:
             existing_ids = {task['id'] for task in self.all_tasks}
             for block in blocks:
@@ -226,11 +229,12 @@ class ProfiBotScraper:
 
     def human_refresh(self) -> None:
         """Человеческий refresh страницы"""
+        logger.info("Запущено обновление страницы")
         time.sleep(random.uniform(5, 8))
         self.driver.refresh()
         time.sleep(random.uniform(8, 12))
         self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(random.uniform(2, 4))
+        time.sleep(random.uniform(10, 20))
 
     def send_batch(self) -> None:
         new_tasks = []
@@ -359,7 +363,7 @@ class ProfiBotScraper:
             self.shutdown()
 
     def run(self) -> None:
-        logger.info("Начало работы скрипта")
+        logger.info("====== Начало работы бота ======")
         self.load_cookies()
         sending_thread = threading.Thread(target=self.sending_loop, daemon=True, name="SendingThread")
         search_thread = threading.Thread(target=self.search_loop, daemon=True, name="SearchThread")
