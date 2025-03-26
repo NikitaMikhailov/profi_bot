@@ -2,7 +2,7 @@ auth:
   login: "MikhaylovNV24"
   password: "turtlew001"
   telegram_token: "7900350947:AAH6HwpS3cul80lpRrfBCZYcfV1UcsVzhfY"
-  telegram_chat_id: "-1002537323202"
+  telegram_chat_id: "448432243"
 
 search:
   good_words:
@@ -15,6 +15,10 @@ search:
     - "создание"
   bad_words:
     - "врач"
+    - "педагог"
+    - "репетитор"
+    - "продавец"
+    - "опрос"
 
 settings:
   refresh_interval: 120                              # Интервал отправки сообщений в Телеграм (в секундах)
