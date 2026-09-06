@@ -21,7 +21,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 from config_logging import setup_logging
 
-# Настройка логирования из отдельного файла конфигурации
+# Configure logging from a separate config module
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,9 @@ class ProfiBotScraper:
         chrome_options.add_argument('--disable-gpu')
         if self.headless:
             chrome_options.add_argument('--headless=new')
-            logger.info("Режим headless включен")
+            logger.info("Headless mode enabled")
         else:
-            logger.info("Режим headless выключен")
+            logger.info("Headless mode disabled")
 
         user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -94,7 +94,7 @@ class ProfiBotScraper:
         ]
         chosen_user_agent = random.choice(user_agents)
         chrome_options.add_argument(f'user-agent={chosen_user_agent}')
-        logger.info("Выбран User-Agent: %s", chosen_user_agent)
+        logger.info("Selected User-Agent: %s", chosen_user_agent)
 
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -106,11 +106,11 @@ class ProfiBotScraper:
                 data = json.load(f)
                 self.all_tasks = data.get('all_tasks', [])
                 self.sent_tasks = set(data.get('sent_tasks', []))
-            logger.info("Состояние успешно загружено из %s", self.state_file)
+            logger.info("State successfully loaded from %s", self.state_file)
         except FileNotFoundError:
-            logger.info("Файл состояния %s не найден, начинаем с пустого состояния", self.state_file)
+            logger.info("State file %s not found, starting with an empty state", self.state_file)
         except Exception as e:
-            logger.exception("Ошибка загрузки состояния: %s", e)
+            logger.exception("Error loading state: %s", e)
             self.shutdown()
 
     def save_state(self) -> None:
@@ -121,27 +121,27 @@ class ProfiBotScraper:
         try:
             with open(self.state_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info("Состояние успешно сохранено в %s", self.state_file)
+            logger.info("State successfully saved to %s", self.state_file)
         except Exception as e:
-            logger.exception("Ошибка сохранения состояния: %s", e)
+            logger.exception("Error saving state: %s", e)
             self.shutdown()
 
     def load_cookies(self) -> None:
-        """Загрузка session cookies вместо логина и пароля"""
+        """Load session cookies instead of logging in with a username/password."""
         try:
-            self.driver.get(self.URL_TASKS)  # Установка домена
+            self.driver.get(self.URL_TASKS)  # Set the domain first
             if not os.path.exists("session"):
-                logger.error("Файл session не найден.")
+                logger.error("Session file not found.")
                 self.shutdown()
                 return
             cookies = pickle.load(open("session", "rb"))
             for cookie in cookies:
                 self.driver.add_cookie(cookie)
-            self.driver.get(self.URL_TASKS)  # Повторный переход с cookie
+            self.driver.get(self.URL_TASKS)  # Reload with the cookies applied
             time.sleep(10)
-            logger.info("Cookies успешно загружены")
+            logger.info("Cookies loaded successfully")
         except Exception as e:
-            logger.exception("Ошибка при загрузке cookies: %s", e)
+            logger.exception("Error loading cookies: %s", e)
             self.shutdown()
 
     def refresh_page(self) -> None:
@@ -155,7 +155,7 @@ class ProfiBotScraper:
             time.sleep(random.randint(self.SCROLL_PAUSE_TIME, self.SCROLL_PAUSE_TIME + 3))
             new_height = self.driver.execute_script("return document.body.scrollHeight")
             if new_height == last_height:
-                logger.info("Конец прокрутки страницы")
+                logger.info("Reached the end of the page")
                 break
             last_height = new_height
 
@@ -168,27 +168,27 @@ class ProfiBotScraper:
         valid_ids = {task['id'] for task in self.all_tasks}
         self.sent_tasks = self.sent_tasks.intersection(valid_ids)
         removed = original_count - len(self.all_tasks)
-        logger.info("Очищено старых задач: %d удалено, осталось: %d", removed, len(self.all_tasks))
+        logger.info("Cleaned up old tasks: %d removed, %d remaining", removed, len(self.all_tasks))
 
     def update_all_tasks(self) -> None:
         try:
             self.human_refresh()
         except TimeoutException as ex:
-            logger.exception("TimeoutException при обновлении страницы: %s", ex)
+            logger.exception("TimeoutException while refreshing the page: %s", ex)
             try:
                 self.driver.refresh()
             except Exception as e:
-                logger.exception("Ошибка при обновлении страницы: %s", e)
+                logger.exception("Error refreshing the page: %s", e)
                 self.shutdown()
 
-        logger.info("Поиск новых задач на странице запущен")
+        logger.info("Searching for new tasks on the page")
         self.refresh_page()
         page = self.driver.page_source
         soup = bs(page, 'html.parser')
         blocks = soup.find_all(class_=re.compile('SnippetBodyStyles__Container-'))
         new_tasks = []
         if not blocks:
-            logger.error("Блоки задач не найдены на странице")
+            logger.error("No task blocks found on the page")
         with self.lock:
             existing_ids = {task['id'] for task in self.all_tasks}
             for block in blocks:
@@ -220,16 +220,16 @@ class ProfiBotScraper:
 
             if new_tasks:
                 self.all_tasks = new_tasks + self.all_tasks
-                logger.info("Добавлено новых задач: %d", len(new_tasks))
+                logger.info("Added %d new tasks", len(new_tasks))
             else:
-                logger.info("Новых задач не найдено.")
-            logger.info("Всего задач в хранилище: %d", len(self.all_tasks))
+                logger.info("No new tasks found.")
+            logger.info("Total tasks in storage: %d", len(self.all_tasks))
             self.cleanup_old_tasks()
             self.save_state()
 
     def human_refresh(self) -> None:
-        """Человеческий refresh страницы"""
-        logger.info("Запущено обновление страницы")
+        """Refresh the page with human-like pacing."""
+        logger.info("Refreshing the page")
         time.sleep(random.uniform(5, 8))
         self.driver.refresh()
         time.sleep(random.uniform(8, 12))
@@ -246,7 +246,7 @@ class ProfiBotScraper:
                                        set(self.bad_words)):
                         new_tasks.append(task)
         if not new_tasks:
-            logger.info("Нет новых задач для отправки.")
+            logger.info("No new tasks to send.")
             return
 
         batch = new_tasks[:self.BATCH_SIZE]
@@ -256,9 +256,9 @@ class ProfiBotScraper:
                 self.send_telegram_message(formatted_message)
             with self.lock:
                 self.sent_tasks.add(task['id'])
-            logger.info("Задача отправлена: %s", task['title'])
-        logger.info("Отправлено пачкой %d задач", len(batch))
-        logger.info("Всего отправлено задач: %d", len(self.sent_tasks))
+            logger.info("Task sent: %s", task['title'])
+        logger.info("Sent a batch of %d tasks", len(batch))
+        logger.info("Total tasks sent so far: %d", len(self.sent_tasks))
         self.save_state()
 
     @staticmethod
@@ -280,7 +280,7 @@ class ProfiBotScraper:
             task_url = None
 
         message = (
-            f"📌 *Новое задание*\n\n"
+            f"📌 *New task*\n\n"
             f"📝 *{task_title}*\n"
             f"{task_description}\n"
         )
@@ -288,12 +288,12 @@ class ProfiBotScraper:
         if task_time:
             message += f"\n🕒 _{task_time}_\n"
         else:
-            message += "Время задачи не распознано.\n"
+            message += "Task time could not be determined.\n"
 
         if task_url:
-            message += f"\n🔗 [Подробнее о задании]({task_url})"
+            message += f"\n🔗 [View task details]({task_url})"
         else:
-            message += "\nСсылка на задачу не найдена."
+            message += "\nTask link not found."
         return message
 
     @staticmethod
@@ -319,9 +319,9 @@ class ProfiBotScraper:
                     time.sleep(2)
             else:
                 self.bot.send_message(self.chat_id, message, parse_mode="Markdown")
-            logger.info("Сообщение отправлено в Telegram")
+            logger.info("Message sent to Telegram")
         except Exception as e:
-            logger.exception("Ошибка при отправке сообщения в Telegram: %s", e)
+            logger.exception("Error sending message to Telegram: %s", e)
             self.shutdown()
 
     def sending_loop(self) -> None:
@@ -331,7 +331,7 @@ class ProfiBotScraper:
                 sleep_duration = random.uniform(self.REFRESH_INTERVAL - 5, self.REFRESH_INTERVAL + 5)
                 time.sleep(sleep_duration)
         except Exception as e:
-            logger.exception("Критическая ошибка в sending_loop: %s", e)
+            logger.exception("Critical error in sending_loop: %s", e)
             self.shutdown()
 
     def search_loop(self) -> None:
@@ -343,11 +343,11 @@ class ProfiBotScraper:
                 is_night = self.night_start_hour <= now_hour < self.night_end_hour
 
                 if is_night:
-                    sleep_time = random.randint(3600, 5400)  # от 1 до 1.5 часов
-                    logger.info("🌙 Ночной режим. Следующий поиск через %d секунд", sleep_time)
+                    sleep_time = random.randint(3600, 5400)  # 1 to 1.5 hours
+                    logger.info("🌙 Night mode. Next search in %d seconds", sleep_time)
                 else:
-                    sleep_time = random.randint(600, 1200)  # от 10 до 20 минут
-                    logger.info("Дневной режим. Следующий поиск через %d секунд", sleep_time)
+                    sleep_time = random.randint(600, 1200)  # 10 to 20 minutes
+                    logger.info("Day mode. Next search in %d seconds", sleep_time)
 
                 current_sleep_time = 0
                 while not self.shutdown_flag and current_sleep_time < sleep_time:
@@ -357,13 +357,13 @@ class ProfiBotScraper:
                 if not self.shutdown_flag:
                     self.update_all_tasks()
                 else:
-                    logger.info("Поиск не запущен, т.к. флаг завершения установлен.")
+                    logger.info("Search skipped because the shutdown flag is set.")
         except Exception as e:
-            logger.exception("Критическая ошибка в search_loop: %s", e)
+            logger.exception("Critical error in search_loop: %s", e)
             self.shutdown()
 
     def run(self) -> None:
-        logger.info("====== Начало работы бота ======")
+        logger.info("====== Bot starting ======")
         self.load_cookies()
         sending_thread = threading.Thread(target=self.sending_loop, daemon=True, name="SendingThread")
         search_thread = threading.Thread(target=self.search_loop, daemon=True, name="SearchThread")
@@ -374,27 +374,27 @@ class ProfiBotScraper:
             while not self.shutdown_flag:
                 time.sleep(1)
         except KeyboardInterrupt:
-            logger.info("Получен сигнал остановки. Завершаем работу.")
+            logger.info("Stop signal received. Shutting down.")
             self.shutdown()
         finally:
             for t in self.threads:
                 t.join(timeout=5)
             self.save_state()
-            logger.info("Работа завершена.")
+            logger.info("Shutdown complete.")
 
     def shutdown(self) -> None:
-        logger.info("Начало процедуры завершения работы потока")
+        logger.info("Starting shutdown procedure")
         self.shutdown_flag = True
         try:
             self.driver.quit()
         except Exception as e:
-            logger.exception("Ошибка при закрытии драйвера: %s", e)
+            logger.exception("Error closing the driver: %s", e)
         try:
             shutil.rmtree(self.temp_user_data_dir)
         except Exception as e:
-            logger.exception("Ошибка при удалении временной директории: %s", e)
+            logger.exception("Error removing temporary directory: %s", e)
         self.save_state()
-        logger.info("Поток завершил работу корректно.")
+        logger.info("Thread shut down cleanly.")
 
 
 if __name__ == '__main__':
@@ -402,7 +402,7 @@ if __name__ == '__main__':
         with open("config.yaml", "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
     except Exception as e:
-        logger.exception("Ошибка загрузки конфигурации: %s", e)
+        logger.exception("Error loading configuration: %s", e)
         raise
 
     auth = config.get("auth", {})

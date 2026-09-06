@@ -1,0 +1,31 @@
+auth:
+  login: "your_profi_ru_login"
+  password: "your_profi_ru_password"
+  telegram_token: "your_telegram_bot_token"        # from @BotFather
+  telegram_chat_id: "your_telegram_chat_id"        # your user id or a group/channel id
+
+search:
+  good_words:
+    - "MK"
+    - "website"
+    - "programming"
+    - "circuit design"
+    - "design"
+    - "development"
+  bad_words:
+    - "doctor"
+    - "teacher"
+    - "tutor"
+    - "sales"
+    - "survey"
+
+settings:
+  refresh_interval: 120                              # Interval between Telegram sends, in seconds
+  batch_size: 10                                     # Number of tasks sent per batch
+  scroll_pause_time: 2                                # Pause between page scrolls, in seconds
+  night_start_hour: 23                                # Hour when night mode starts
+  night_end_hour: 7                                   # Hour when night mode ends
+
+chrome:
+  cookies_file: "session"                             # File where session cookies are stored
+  headless: True                                      # true = run without a visible browser window

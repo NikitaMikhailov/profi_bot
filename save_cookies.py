@@ -27,9 +27,9 @@ options = Options()
 
 if HEADLESS:
     options.add_argument("--headless=new")
-    logger.info("Режим headless включен")
+    logger.info("Headless mode enabled")
 else:
-    logger.info("Режим headless выключен")
+    logger.info("Headless mode disabled")
 
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
@@ -40,21 +40,21 @@ try:
     driver.get("https://profi.ru/backoffice/n.php")
     time.sleep(3)
 
-    # Ввод логина
+    # Enter the login
     login_field = driver.find_element(By.CLASS_NAME, "ui-input")
     login_field.send_keys(LOGIN)
-    # Ввод пароля
+    # Enter the password
     password_field = driver.find_elements(By.CLASS_NAME, "ui-input")[1]
     password_field.send_keys(PASSWORD)
 
-    # Клик по кнопке входа
+    # Click the login button
     driver.find_element(By.CLASS_NAME, "ui-button").click()
     time.sleep(10)
 
-    # Сохраняем cookies
+    # Save the cookies
     pickle.dump(driver.get_cookies(), open(COOKIE_FILE, "wb"))
-    logger.info("✅ Сессия сохранена в %s", COOKIE_FILE)
+    logger.info("✅ Session saved to %s", COOKIE_FILE)
 except Exception as e:
-    logger.exception("❌ Ошибка при headless-авторизации: %s", e)
+    logger.exception("❌ Error during headless login: %s", e)
 finally:
     driver.quit()

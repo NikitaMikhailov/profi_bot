@@ -172,3 +172,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# profi-scout runtime files (secrets and local state)
+config.yaml
+session
+state.json
+bot.log
+
